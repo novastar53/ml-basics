@@ -13,12 +13,13 @@ import numpy as np
 
 import matplotlib.pyplot as plt 
 
-def main():
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
-	# Set up logging
-	logging.basicConfig(level=logging.INFO)
-	logger = logging.getLogger(__name__)
-	logger.setLevel(logging.INFO)
+
+def main():
 
 	# Let's use some simple dummy data that should easily fit into 2 clusters
 	true_centers = np.array([[-7, -7],[4, 1.5],[-3, 8]])
