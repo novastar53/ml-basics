@@ -6,11 +6,13 @@ authors = ["Vikram Pawar <pvikram035@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.12"
+python = ">=3.12,<3.13"
 torch = "^2.4.0"
 scikit-learn = "^1.5.1"
-numpy = "^2.0.1"
+numpy = "^1.26.4"
 matplotlib = "^3.9.1"
+manim = "^0.18.1"
+pylatex = "^1.4.2"
 
 
 [build-system]
