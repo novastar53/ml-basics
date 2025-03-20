@@ -1,9 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from mpl_toolkits.mplot3d import Axes3D
 
-lr = 0.7
+lr = 0.001
 
 def f(X, Y):
     return 50*(X**2) + 0.01*(Y**2)
@@ -26,6 +25,18 @@ def newton_step(x, y, lr=lr):
     g_prime = h_i @ g
     return [ x - lr*g_prime[0], y - lr*g_prime[1]]
 
+acc_g = None
+def momentum_step(x, y, lr=lr, m=0.99):
+    global acc_g
+    if acc_g is None:
+        return grad_step(x, y)
+    g_prime = m*acc_g + g_f(x, y)
+    acc_g = g_prime
+    return [ x - lr*g_prime[0], y - lr*g_prime[1] ]
+
+
+
+
 
 X = np.linspace(-5, 5, 100)
 Y = np.linspace(-5, 5, 100)
@@ -39,7 +50,7 @@ Y_point = []
 x = -5
 y = 0
 for i in range(num_frames):
-    x_next, y_next = newton_step(x, y)
+    x_next, y_next = momentum_step(x, y)
     X_point.append(x_next)
     Y_point.append(y_next)
     x = x_next
