@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-lr = 0.001
+lr = 1
 
 def f(X, Y):
     return 50*(X**2) + 0.01*(Y**2)
@@ -35,6 +35,14 @@ def momentum_step(x, y, lr=lr, m=0.99):
     return [ x - lr*g_prime[0], y - lr*g_prime[1] ]
 
 
+adagrad_eps = 1e-5
+adagrad_s = np.array([adagrad_eps, adagrad_eps])
+def adagrad_step(x, y, lr=lr):
+    global adagrad_s
+    g = g_f(x, y)
+    adagrad_s = adagrad_s + g**2
+    s = np.sqrt(1/adagrad_s)
+    return [ x - lr*s[0]*g[0], y - lr*s[1]*g[1]]
 
 
 
@@ -50,7 +58,7 @@ Y_point = []
 x = -5
 y = 0
 for i in range(num_frames):
-    x_next, y_next = momentum_step(x, y)
+    x_next, y_next = adagrad_step(x, y)
     X_point.append(x_next)
     Y_point.append(y_next)
     x = x_next
