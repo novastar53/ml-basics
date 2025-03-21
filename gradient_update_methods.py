@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-lr = 1
+lr = 0.04
 
 def f(X, Y):
     return 50*(X**2) + 0.01*(Y**2)
@@ -34,7 +34,6 @@ def momentum_step(x, y, lr=lr, m=0.99):
     acc_g = g_prime
     return [ x - lr*g_prime[0], y - lr*g_prime[1] ]
 
-
 adagrad_eps = 1e-5
 adagrad_s = np.array([adagrad_eps, adagrad_eps])
 def adagrad_step(x, y, lr=lr):
@@ -44,6 +43,31 @@ def adagrad_step(x, y, lr=lr):
     s = np.sqrt(1/adagrad_s)
     return [ x - lr*s[0]*g[0], y - lr*s[1]*g[1]]
 
+rmsprop_eps = 1e-5
+rmsprop_s = np.array([rmsprop_eps, rmsprop_eps])
+def rmsprop_step(x, y, lr=lr, b=0.9):
+    global rmsprop_s 
+    g = g_f(x, y)
+    rmsprop_s = b*rmsprop_s + (1 - b)*(g**2)
+    s = rmsprop_s**(-0.5)
+    return [ x - lr*s[0]*g[0], y - lr*s[1]*g[1]]
+
+
+adam_eps = 1e-5
+adam_m1 = np.array([0, 0])
+adam_m2 = np.array([0, 0])
+def adam_step(x, y, lr=lr, b1=0.9, b2=0.999):
+    global adam_m1, adam_m2, adam_eps
+    g = g_f(x, y)
+    adam_m1 = b1*adam_m1 + (1 - b1)*g
+    #adam_m1 = adam_m1/(1 - b1) # TODO: This scaling term shrinks the updates too much. Need to investigate.
+
+    adam_m2 = b2*adam_m2 + (1 - b2)*(g**2)
+    #adam_m2 = adam_m2/(1 - b2)
+    s2 = 1 / (adam_eps + adam_m2**0.5)
+    print(s2)
+
+    return [x - lr*s2[0]*adam_m1[0], y - lr*s2[1]*adam_m1[1] ]
 
 
 X = np.linspace(-5, 5, 100)
@@ -58,7 +82,7 @@ Y_point = []
 x = -5
 y = 0
 for i in range(num_frames):
-    x_next, y_next = adagrad_step(x, y)
+    x_next, y_next = adam_step(x, y)
     X_point.append(x_next)
     Y_point.append(y_next)
     x = x_next
