@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-lr = 0.04
+lr = 0.1
 
 def f(X, Y):
     return 50*(X**2) + 0.01*(Y**2)
@@ -65,9 +65,18 @@ def adam_step(x, y, lr=lr, b1=0.9, b2=0.999):
     adam_m2 = b2*adam_m2 + (1 - b2)*(g**2)
     #adam_m2 = adam_m2/(1 - b2)
     s2 = 1 / (adam_eps + adam_m2**0.5)
-    print(s2)
 
     return [x - lr*s2[0]*adam_m1[0], y - lr*s2[1]*adam_m1[1] ]
+
+
+lion_m = np.array([0, 0])
+def lion_step(x, y, lr=lr, b=0.9):
+    global lion_m
+    g = g_f(x, y)
+    lion_m = b*lion_m + (1-b)*g
+    s = np.sign(lion_m)
+    return [ x - lr * s[0], y - lr * s[1]]
+
 
 
 X = np.linspace(-5, 5, 100)
@@ -82,7 +91,7 @@ Y_point = []
 x = -5
 y = 0
 for i in range(num_frames):
-    x_next, y_next = adam_step(x, y)
+    x_next, y_next = lion_step(x, y)
     X_point.append(x_next)
     Y_point.append(y_next)
     x = x_next
