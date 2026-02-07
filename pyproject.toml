@@ -1,22 +1,18 @@
-[tool.poetry]
+[project]
 name = "ml-basics"
 version = "0.1.0"
 description = ""
-authors = ["Vikram Pawar <pvikram035@gmail.com>"]
+authors = [{ name = "Vikram Pawar", email = "pvikram035@gmail.com" }]
 readme = "README.md"
-
-[tool.poetry.dependencies]
-python = ">=3.12,<3.13"
-torch = "^2.4.0"
-scikit-learn = "^1.5.1"
-numpy = "^1.26.4"
-matplotlib = "^3.9.1"
-manim = "^0.18.1"
-pylatex = "^1.4.2"
-jupyter = "^1.1.1"
-nbconvert = "^7.16.4"
-
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires-python = ">=3.13"
+dependencies = [
+    "torch>=2.4.0",
+    "scikit-learn>=1.5.1",
+    "numpy>=1.26.4",
+    "matplotlib>=3.9.1",
+    "manim>=0.18.1",
+    "pylatex>=1.4.2",
+    "jupyter>=1.1.1",
+    "nbconvert>=7.16.4",
+    "jax>=0.4.30",
+]
