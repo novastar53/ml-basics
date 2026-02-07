@@ -23,5 +23,10 @@ weights = F.softmax(raw_weights, dim=2)
 y = torch.bmm(weights, x)
 
 # print the results
+# As you can see, the output is of the same
+# dimension as the input, but the values 
+# have been transformed by interactions 
+# between each pair of words
 print("inputs", x)
 print("outputs", y)
+

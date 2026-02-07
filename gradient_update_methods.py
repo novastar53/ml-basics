@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-lr = 0.1
+lr = 0.2
 
 def f(X, Y):
     return 50*(X**2) + 0.01*(Y**2)
@@ -132,7 +132,7 @@ def update(frame):
     return point,
 
 # Create animation
-ani = animation.FuncAnimation(fig, update, frames=num_frames, init_func=init, blit=True, interval=500)
+ani = animation.FuncAnimation(fig, update, frames=num_frames, init_func=init, blit=True, interval=100)
 
 # Display animation
 ani.save('gradient_descent.gif', writer='ffmpeg', fps=30)
