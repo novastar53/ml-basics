@@ -152,6 +152,15 @@ if ! command -v tmux &> /dev/null; then
     fi
 fi
 
+# Install system dependencies for manim (pycairo, manimpango)
+if command -v apt-get &> /dev/null; then
+    echo "Checking system dependencies..."
+    if ! dpkg -l | grep -q libcairo2-dev || ! dpkg -l | grep -q libpango1.0-dev; then
+        echo "Installing cairo and pango development libraries..."
+        apt-get update && apt-get install -y libcairo2-dev pkg-config libpango1.0-dev
+    fi
+fi
+
 # Install dependencies if needed
 if ! command -v uv &> /dev/null; then
     echo "Installing uv..."
