@@ -280,8 +280,9 @@ class CLIPWrapper:
             Text embeddings as numpy array (len(texts), clip_dim)
         """
         inputs = self.processor(text=texts, return_tensors="pt", padding=True)
-        # Use get_text_features() which applies projection to common space
-        text_features = self.model.get_text_features(**inputs)
+        # Get text features and apply projection to common space (512-dim)
+        text_outputs = self.model.text_model(**inputs)
+        text_features = self.model.text_projection(text_outputs.pooler_output)
         # Normalize embeddings (CLIP embeddings are typically normalized)
         text_features = text_features / torch.norm(text_features, dim=-1, keepdim=True)
         return text_features.detach().numpy()
@@ -297,8 +298,9 @@ class CLIPWrapper:
             Image embeddings as numpy array (len(images), clip_dim)
         """
         inputs = self.processor(images=images, return_tensors="pt", padding=True)
-        # Use get_image_features() which applies projection to common space
-        image_features = self.model.get_image_features(**inputs)
+        # Get image features and apply projection to common space (512-dim)
+        vision_outputs = self.model.vision_model(**inputs)
+        image_features = self.model.visual_projection(vision_outputs.pooler_output)
         # Normalize embeddings
         image_features = image_features / torch.norm(image_features, dim=-1, keepdim=True)
         return image_features.detach().numpy()

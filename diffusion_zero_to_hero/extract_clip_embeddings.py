@@ -65,11 +65,13 @@ def extract_embeddings(split: str, output_path: str, batch_size: int = 64):
             inputs = processor(images=pil_images, return_tensors="pt", padding=True)
             inputs = {k: v.to(device) for k, v in inputs.items()}
 
-            # Get image features (use projection to common space)
-            embeddings = model.get_image_features(**inputs)
+            # Get image features from vision model (768-dim)
+            vision_outputs = model.vision_model(**inputs)
+            # Apply projection to common space (512-dim)
+            image_features = model.visual_projection(vision_outputs.pooler_output)
 
             # Normalize embeddings
-            embeddings = embeddings / torch.norm(embeddings, dim=-1, keepdim=True)
+            embeddings = image_features / torch.norm(image_features, dim=-1, keepdim=True)
 
             # Store
             all_embeddings.append(embeddings.cpu().numpy())
