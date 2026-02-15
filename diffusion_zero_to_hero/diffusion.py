@@ -1,7 +1,7 @@
 """Basic Diffusion Model (DDPM) implementation in JAX/Flax NNX.
 
 Follows the same patterns as vae.py:
-- Uses CelebA dataset (56x56 RGB)
+- Uses CIFAR-10 dataset (32x32 RGB)
 - Simple U-Net denoiser
 - Variance-preserving forward process
 """
@@ -16,7 +16,7 @@ import numpy as np
 import optax
 from tqdm import tqdm
 
-from jax_flow.datasets.celeb_a import DataConfig, make_dataloader
+from jax_flow.datasets.cifar10 import DataConfig, make_dataloader
 
 
 @dataclass
@@ -368,7 +368,7 @@ class DiffusionModel:
         """
         # Start from pure noise
         key, subkey = jax.random.split(key)
-        x = jax.random.normal(subkey, (batch_size, 3, 56, 56))
+        x = jax.random.normal(subkey, (batch_size, 3, 32, 32))
 
         trajectory = [x] if return_trajectory else None
 
@@ -424,13 +424,13 @@ def train_diffusion(config: DiffusionConfig = None, data_dir: str = "./data"):
 
     optimizer = nnx.Optimizer(model, optax.adam(config.learning_rate), wrt=nnx.Param)
 
-    # Create dataloader matching VAE settings
+    # Create dataloader for CIFAR-10
     data_cfg = DataConfig(
         batch_size=config.batch_size,
         num_epochs=config.num_epochs,
         shuffle=True,
         as_chw=True,
-        image_size=(56, 56)
+        image_size=(32, 32)
     )
     train_it = make_dataloader("train", data_cfg)
 
