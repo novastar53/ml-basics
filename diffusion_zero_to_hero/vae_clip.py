@@ -41,7 +41,7 @@ from jax_flow.datasets.celeb_a import DataConfig, make_dataloader, visualize_bat
 class Config:
     """Configuration for CLIP-Conditioned VAE"""
     hidden_size: int = 16  # Latent dimension
-    clip_dim: int = 768    # CLIP embedding dimension (ViT-Base: 768, ViT-Large: 1024)
+    clip_dim: int = 512    # CLIP projection dimension (both text and image project to 512-dim)
     film_hidden_dim: int = 128  # Hidden dim for FiLM MLPs
 
 
@@ -280,8 +280,8 @@ class CLIPWrapper:
             Text embeddings as numpy array (len(texts), clip_dim)
         """
         inputs = self.processor(text=texts, return_tensors="pt", padding=True)
-        outputs = self.model.text_model(**inputs)
-        text_features = outputs.pooler_output
+        # Use get_text_features() which applies projection to common space
+        text_features = self.model.get_text_features(**inputs)
         # Normalize embeddings (CLIP embeddings are typically normalized)
         text_features = text_features / torch.norm(text_features, dim=-1, keepdim=True)
         return text_features.detach().numpy()
@@ -297,8 +297,8 @@ class CLIPWrapper:
             Image embeddings as numpy array (len(images), clip_dim)
         """
         inputs = self.processor(images=images, return_tensors="pt", padding=True)
-        outputs = self.model.vision_model(**inputs)
-        image_features = outputs.pooler_output
+        # Use get_image_features() which applies projection to common space
+        image_features = self.model.get_image_features(**inputs)
         # Normalize embeddings
         image_features = image_features / torch.norm(image_features, dim=-1, keepdim=True)
         return image_features.detach().numpy()
