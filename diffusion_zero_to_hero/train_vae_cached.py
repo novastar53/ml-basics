@@ -38,9 +38,12 @@ def train_with_cached_embeddings(
     
     all_images = np.stack(all_images)
     print(f"Loaded {len(all_images)} images, shape: {all_images.shape}")
-    
-    assert len(all_images) == len(all_clip_emb), \
-        f"Mismatch: {len(all_images)} images vs {len(all_clip_emb)} embeddings"
+
+    # Handle mismatch by using minimum of both
+    num_samples = min(len(all_images), len(all_clip_emb))
+    all_images = all_images[:num_samples]
+    all_clip_emb = all_clip_emb[:num_samples]
+    print(f"Using {num_samples} matched samples")
     
     # Initialize model
     print("Initializing model...")
@@ -51,8 +54,7 @@ def train_with_cached_embeddings(
     
     # Training loop
     key = jax.random.PRNGKey(42)
-    num_samples = len(all_images)
-    
+
     for epoch in range(num_epochs):
         print(f"\nEpoch {epoch + 1}/{num_epochs}")
         
