@@ -424,14 +424,13 @@ def train_diffusion(config: DiffusionConfig = None, data_dir: str = "./data"):
 
     optimizer = nnx.Optimizer(model, optax.adam(config.learning_rate), wrt=nnx.Param)
 
-    # Create dataloader for Fashion-MNIST
+    # Create dataloader config for Fashion-MNIST
     data_cfg = DataConfig(
         batch_size=config.batch_size,
-        num_epochs=config.num_epochs,
+        num_epochs=1,  # One epoch at a time (recreated in loop)
         shuffle=True,
         as_chw=True
     )
-    train_it = make_dataloader("train", data_cfg)
 
     print(f"Training for {config.num_epochs} epochs...")
     key = jax.random.PRNGKey(42)
@@ -441,6 +440,8 @@ def train_diffusion(config: DiffusionConfig = None, data_dir: str = "./data"):
         epoch_loss = 0.0
         num_batches = 0
 
+        # Recreate dataloader for each epoch (iterator gets exhausted)
+        train_it = make_dataloader("train", data_cfg)
         pbar = tqdm(train_it, desc=f"Epoch {epoch+1}/{config.num_epochs}")
         for batch_idx, (x0, _) in enumerate(pbar):
             batch_size = x0.shape[0]
