@@ -5,6 +5,9 @@ Usage:
     python train_diffusion.py --generate --n-samples 16
 """
 
+import os
+os.environ['CELEBA_BACKEND'] = 'torchvision'
+
 import argparse
 import numpy as np
 import jax
