@@ -1,7 +1,7 @@
 """Basic Diffusion Model (DDPM) implementation in JAX/Flax NNX.
 
 Follows the same patterns as vae.py:
-- Uses CIFAR-10 dataset (32x32 RGB)
+- Uses Fashion-MNIST dataset (28x28 grayscale)
 - Simple U-Net denoiser
 - Variance-preserving forward process
 """
@@ -16,7 +16,7 @@ import numpy as np
 import optax
 from tqdm import tqdm
 
-from jax_flow.datasets.cifar10 import DataConfig, make_dataloader
+from jax_flow.datasets.fashion_mnist import DataConfig, make_dataloader
 
 
 @dataclass
@@ -129,7 +129,7 @@ class UNet(nnx.Module):
         self.time_mlp = TimeMLP(config.time_emb_dim, config.time_emb_dim, rngs=rngs)
 
         # Input projection (3 channels RGB -> base_channels)
-        self.input_conv = nnx.Conv(3, config.base_channels, kernel_size=(3, 3), padding='SAME', rngs=rngs)
+        self.input_conv = nnx.Conv(1, config.base_channels, kernel_size=(3, 3), padding='SAME', rngs=rngs)
 
         # Encoder (downsampling path) - store blocks per level for clarity
         encoder_block_lists = []  # List of lists, will convert to nnx.List later
@@ -193,7 +193,7 @@ class UNet(nnx.Module):
         self.decoder_block_lists = nnx.List(decoder_block_lists)
 
         # Output projection
-        self.output_conv = nnx.Conv(channels, 3, kernel_size=(3, 3), padding='SAME', rngs=rngs)
+        self.output_conv = nnx.Conv(channels, 1, kernel_size=(3, 3), padding='SAME', rngs=rngs)
 
     def __call__(self, x: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
         """Forward pass predicting noise.
@@ -368,7 +368,7 @@ class DiffusionModel:
         """
         # Start from pure noise
         key, subkey = jax.random.split(key)
-        x = jax.random.normal(subkey, (batch_size, 3, 32, 32))
+        x = jax.random.normal(subkey, (batch_size, 1, 28, 28))
 
         trajectory = [x] if return_trajectory else None
 
@@ -424,13 +424,12 @@ def train_diffusion(config: DiffusionConfig = None, data_dir: str = "./data"):
 
     optimizer = nnx.Optimizer(model, optax.adam(config.learning_rate), wrt=nnx.Param)
 
-    # Create dataloader for CIFAR-10
+    # Create dataloader for Fashion-MNIST
     data_cfg = DataConfig(
         batch_size=config.batch_size,
         num_epochs=config.num_epochs,
         shuffle=True,
-        as_chw=True,
-        image_size=(32, 32)
+        as_chw=True
     )
     train_it = make_dataloader("train", data_cfg)
 
