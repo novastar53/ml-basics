@@ -30,12 +30,6 @@ dependencies = [
 gpu = [
     "jax[cuda12]>=0.4.30",
 ]
-cpu = [
-    "jax>=0.4.30",
-]
-metal = [
-    "jax-metal>=0.4.30",
-]
 
 [tool.uv.sources]
 # Local jax_fusion for diffusion examples

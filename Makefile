@@ -8,20 +8,14 @@ UNAME_M := $(shell uname -m)
 UNAME_S := $(shell uname -s)
 
 # Set JAX extras based on platform
-ifeq ($(UNAME_S),Darwin)
-    ifeq ($(UNAME_M),arm64)
-        JAX_PLATFORM = metal
-    else
-        JAX_PLATFORM = cpu
-    endif
-else ifeq ($(UNAME_S),Linux)
+ifeq ($(UNAME_S),Linux)
     ifeq ($(shell command -v nvidia-smi > /dev/null 2>&1 && echo yes),yes)
         JAX_PLATFORM = gpu
     else
-        JAX_PLATFORM = cpu
+        JAX_PLATFORM =
     endif
 else
-    JAX_PLATFORM = cpu
+    JAX_PLATFORM =
 endif
 
 print-platform:
@@ -30,12 +24,20 @@ print-platform:
 # Install dependencies with platform-specific JAX
 install:
 	@command -v uv >/dev/null 2>&1 || (curl -LsSf https://astral.sh/uv/install.sh | sh)
-	uv sync --extra $(JAX_PLATFORM)
+ifeq ($(JAX_PLATFORM),gpu)
+	uv sync --extra gpu
+else
+	uv sync
+endif
 
 # Regenerate lockfile from scratch
 regen-lock:
 	rm -f uv.lock
-	uv sync --extra $(JAX_PLATFORM)
+ifeq ($(JAX_PLATFORM),gpu)
+	uv sync --extra gpu
+else
+	uv sync
+endif
 
 # Add a production dependency (usage: make add pkg=package_name)
 add:
