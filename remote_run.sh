@@ -116,17 +116,19 @@ if [ -n "\$GIT_REF" ]; then
     git checkout "\$GIT_REF"
 fi
 
-# Clone or update jax_fusion dependency (required sibling directory)
-JAXFUSION_DIR="\$PARENT_DIR/jax_fusion"
-if [ -d "\$JAXFUSION_DIR" ]; then
-    echo "Updating jax_fusion dependency..."
-    cd "\$JAXFUSION_DIR"
+# Clone or update jax-flow dependency (required sibling directory)
+JAXFLOW_DIR="\$PARENT_DIR/jax_fusion"
+if [ -d "\$JAXFLOW_DIR" ]; then
+    echo "Updating jax-flow dependency..."
+    cd "\$JAXFLOW_DIR"
     git fetch origin
     git pull origin main || true
 else
-    echo "Cloning jax_fusion dependency..."
+    echo "Cloning jax-flow dependency..."
     mkdir -p "\$PARENT_DIR"
-    git clone https://github.com/novastar53/jax_fusion "\$JAXFUSION_DIR"
+    # Try jax-flow first, fall back to jax_fusion
+    git clone https://github.com/novastar53/jax-flow "\$JAXFLOW_DIR" 2>/dev/null || \
+        git clone https://github.com/novastar53/jax_fusion "\$JAXFLOW_DIR"
 fi
 
 # Create log directory
