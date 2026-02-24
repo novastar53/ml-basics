@@ -10,45 +10,59 @@ import optax
 from typing import Optional
 #from jax_flow.datasets.fashion_mnist import make_dataloader, visualize_batch, FASHION_LABELS
 from jax_flow.datasets.celeb_a import DataConfig, make_dataloader, visualize_batch
+from jaxpt.utils import count_params
 
-train_it = make_dataloader("train")
+# Create dataloader with explicit config
+cfg = DataConfig(batch_size=32, num_epochs=4, shuffle=True, as_chw=True)
+print("Creating CelebA dataloader...")
+train_it = make_dataloader("train", cfg)
+print(f"DataLoader created with batch_size={cfg.batch_size}")
 
 @dataclass
 class Config:
-    hidden_size: int = 16
+    hidden_size: int = 64
 
 
 class VAE(nnx.Module):
     def __init__(self, config: Config, rngs: nnx.Rngs):
         self.config = config
-        self.conv1 = nnx.Conv(in_features=3, out_features=16, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
-        self.conv2 = nnx.Conv(in_features=16, out_features=32, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
-        self.conv3 = nnx.Conv(in_features=32, out_features=64, kernel_size=(3, 3), strides=(1, 1), padding='SAME', rngs=rngs)
-        self.linear1 = nnx.Linear(14*14*64, 2 * config.hidden_size, rngs=rngs)
-        self.linear2 = nnx.Linear(config.hidden_size, 14*14*64, rngs=rngs)
-        self.deconv1 = nnx.ConvTranspose(in_features=64, out_features=32, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
-        self.deconv2 = nnx.ConvTranspose(in_features=32, out_features=16, kernel_size=(3, 3), strides=(2, 2), padding='SAME', rngs=rngs)
-        self.deconv3 = nnx.ConvTranspose(in_features=16, out_features=3, kernel_size=(3, 3), strides=(1, 1), padding='SAME', rngs=rngs)
-    
+        # Encoder: 56x56 -> 28x28 -> 14x14 -> 7x7
+        self.conv1 = nnx.Conv(in_features=3, out_features=32, kernel_size=(4, 4), strides=(2, 2), padding='SAME', rngs=rngs)
+        self.conv2 = nnx.Conv(in_features=32, out_features=64, kernel_size=(4, 4), strides=(2, 2), padding='SAME', rngs=rngs)
+        self.conv3 = nnx.Conv(in_features=64, out_features=128, kernel_size=(4, 4), strides=(2, 2), padding='SAME', rngs=rngs)
+        # 7x7x128 = 6272
+        self.linear1 = nnx.Linear(7*7*128, 2 * config.hidden_size, rngs=rngs)
+        self.linear2 = nnx.Linear(config.hidden_size, 7*7*128, rngs=rngs)
+        # Decoder: 7x7 -> 14x14 -> 28x28 -> 56x56 using resize+conv (avoids checkerboard artifacts)
+        self.deconv1 = nnx.Conv(in_features=128, out_features=64, kernel_size=(3, 3), padding='SAME', rngs=rngs)
+        self.deconv2 = nnx.Conv(in_features=64, out_features=32, kernel_size=(3, 3), padding='SAME', rngs=rngs)
+        self.deconv3 = nnx.Conv(in_features=32, out_features=3, kernel_size=(3, 3), padding='SAME', rngs=rngs)
+
+    def _resize_conv(self, x, target_h, target_w, conv_layer):
+        """Resize then conv for better upsampling than ConvTranspose."""
+        x = jax.image.resize(x, (x.shape[0], target_h, target_w, x.shape[3]), method='bilinear')
+        return conv_layer(x)
 
     def __call__(self, batch, key: jnp.ndarray = None):
         B, _, _, _ = batch.shape
         batch = batch.transpose(0, 2, 3, 1)
-        x = self.conv1(batch)
-        x = self.conv2(x)
-        x = self.conv3(x)
-        x = x.reshape(B, -1)
-        x = self.linear1(x)
+        # Encoder with ReLU activations
+        x = jax.nn.relu(self.conv1(batch))  # 28x28
+        x = jax.nn.relu(self.conv2(x))       # 14x14
+        x = jax.nn.relu(self.conv3(x))       # 7x7
+        x_flat = x.reshape(B, -1)
+        x = self.linear1(x_flat)
         mu, log_var = jnp.split(x, 2, axis=1)
         key, subkey = jax.random.split(key)
         epsilon = jax.random.normal(subkey, log_var.shape)
         l = mu + jnp.sqrt(jnp.exp(log_var)) * epsilon
         x = self.linear2(l)
-        x = x.reshape(B, 14, 14, 64) 
-        x = self.deconv1(x)
-        x = self.deconv2(x)
-        y = self.deconv3(x)
-        assert(batch.shape == y.shape)
+        x = x.reshape(B, 7, 7, 128)
+        # Decoder with resize-conv and ReLU
+        x = jax.nn.relu(self._resize_conv(x, 14, 14, self.deconv1))
+        x = jax.nn.relu(self._resize_conv(x, 28, 28, self.deconv2))
+        y = self._resize_conv(x, 56, 56, self.deconv3)  # No activation on output
+        assert(batch.shape == y.shape), f"Shape mismatch: {batch.shape} vs {y.shape}"
         y = y.transpose(0, 3, 1, 2)
         return y, mu, log_var, key
 
@@ -75,10 +89,10 @@ def decode_z(vae: VAE, z):
     x = vae.linear2(z)
     if hasattr(x, 'reshape'):
         B = x.shape[0]
-        x = x.reshape(B, 14, 14, 64)
-    x = vae.deconv1(x)
-    x = vae.deconv2(x)
-    y = vae.deconv3(x)
+        x = x.reshape(B, 7, 7, 128)
+    x = jax.nn.relu(vae._resize_conv(x, 14, 14, vae.deconv1))
+    x = jax.nn.relu(vae._resize_conv(x, 28, 28, vae.deconv2))
+    y = vae._resize_conv(x, 56, 56, vae.deconv3)
     y = y.transpose(0, 3, 1, 2)
     return y
 
@@ -121,13 +135,16 @@ def reconstruct_images(model, key, n_images=8, save_path=None):
 
 
 @nnx.jit
-def step_fn(m, x, key):
+def step_fn(m, x, key, kl_weight: float = 0.001):
     def loss_fn(m, x, key):
         y, mu, log_var, key = m(x, key)
         assert(y.shape == x.shape)
-        loss =  jnp.sum((y - x) ** 2) + 0.5 * jnp.sum(jnp.exp(log_var) + mu ** 2 - log_var) 
-        loss /= y.shape[0]
-        return loss, (y, key)
+        # Reconstruction loss (MSE)
+        recon_loss = jnp.sum((y - x) ** 2) / y.shape[0]
+        # KL divergence with tunable weight
+        kl_loss = 0.5 * jnp.sum(jnp.exp(log_var) + mu ** 2 - 1 - log_var) / y.shape[0]
+        loss = recon_loss + kl_weight * kl_loss
+        return loss, (y, key, recon_loss, kl_loss)
 
     return nnx.value_and_grad(loss_fn, has_aux=True)(m, x, key)
 
@@ -135,16 +152,60 @@ def step_fn(m, x, key):
 rngs = nnx.Rngs(default=0)
 config = Config()
 m = VAE(config, rngs)
+print(f"Number of parameters: {count_params(m):,}")
 
 tx = optax.adam(1e-3)
 optimizer = nnx.Optimizer(m, tx, wrt=nnx.Param)
 
-print(f"Total iterations: {len(train_it)}")
+#print(f"Total iterations: {len(train_it)}")
+print("Starting training")
+
+# KL Annealing configuration
+kl_warmup_epochs = 2  # Linearly increase β from 0 to 1 over this many epochs
+steps_per_epoch = 5000  # Approximate steps per epoch
+
+def get_kl_weight(step, warmup_epochs, steps_per_epoch):
+    """Linear KL annealing: 0 -> 1 over warmup_epochs, then stays at 1."""
+    total_warmup_steps = warmup_epochs * steps_per_epoch
+    if step < total_warmup_steps:
+        return step / total_warmup_steps
+    return 1.0
+
+print(f"KL Annealing: Linear β=0 -> 1 over {kl_warmup_epochs} epochs, then β=1")
 key = jax.random.PRNGKey(42)
+import time
+start_time = time.time()
+
+epoch = 0
+steps_in_epoch = 0
+total_step = 0
+
 for i, (x, labels) in enumerate(train_it):
-    (loss, (y, key)), grads = step_fn(m, x, key)
+    iter_start = time.time()
+
+    # Linear KL annealing
+    kl_weight = get_kl_weight(total_step, kl_warmup_epochs, steps_per_epoch)
+
+    (loss, (y, key, recon_loss, kl_loss)), grads = step_fn(m, x, key, kl_weight)
     optimizer.update(m, grads)
-    print(i, loss)
+    iter_time = time.time() - iter_start
+
+    steps_in_epoch += 1
+    total_step += 1
+
+    if i == 0:
+        print(f"First iteration completed in {iter_time:.2f}s (includes JIT compilation)")
+    if i % 100 == 0:
+        print(f"Epoch {epoch+1}, Step {total_step}: total={loss:.2f}, recon={recon_loss:.2f}, kl={kl_loss:.4f}, β={kl_weight:.3f}, time={iter_time:.2f}s")
+
+    # Detect epoch boundary
+    if steps_in_epoch >= steps_per_epoch:
+        epoch += 1
+        steps_in_epoch = 0
+        print(f"=== Completed epoch {epoch} ===")
+
+total_time = time.time() - start_time
+print(f"Total training time: {total_time:.2f}s")
 
 # Reconstruct real images to show VAE reconstruction quality
 reconstruct_images(m, key, n_images=8, save_path="vae_reconstruction.png")
