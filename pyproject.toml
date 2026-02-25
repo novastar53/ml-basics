@@ -20,6 +20,7 @@ dependencies = [
     "flax==0.12.0",
     "optax>=0.2.0",
     "jax-flow",
+    "jaxpt",
     # CLIP-conditioned VAE dependencies
     "transformers>=4.30.0",
     "pillow>=10.0.0",
@@ -35,3 +36,4 @@ gpu = [
 [tool.uv.sources]
 # Local jax_fusion for diffusion examples
 jax-flow = { path = "../jax_fusion" }
+jaxpt = {path = "../jaxpt" }
