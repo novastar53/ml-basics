@@ -136,7 +136,9 @@ if [ -d "\$JAXFLOW_DIR" ]; then
     echo "Updating jax-flow dependency..."
     cd "\$JAXFLOW_DIR"
     git fetch origin
-    git pull origin main || true
+    # Stash any local changes and pull
+    git stash || true
+    git pull origin main || echo "WARNING: git pull failed for jax_fusion"
 else
     echo "Cloning jax-flow dependency..."
     mkdir -p "\$PARENT_DIR"
@@ -199,6 +201,13 @@ fi
 echo "Ensuring dependencies are installed..."
 cd "\$REMOTE_DIR_EXPANDED"
 uv sync --extra gpu 2>/dev/null || uv sync
+
+# Reinstall jax-flow in the venv to pick up changes (must be after uv sync)
+if [ -d "\$PARENT_DIR/jax_fusion" ]; then
+    echo "Reinstalling jax-flow in venv..."
+    cd "\$PARENT_DIR/jax_fusion"
+    uv pip install -e . || uv pip install . || echo "WARNING: uv pip install failed for jax_fusion"
+fi
 
 echo "Remote setup complete!"
 REMOTE_SCRIPT
