@@ -40,8 +40,8 @@ from jax_flow.datasets.celeb_a import DataConfig, make_dataloader, visualize_bat
 @dataclass
 class Config:
     """Configuration for CLIP-Conditioned VAE"""
-    hidden_size: int = 16  # Latent dimension
-    clip_dim: int = 512    # CLIP projection dimension (both text and image project to 512-dim)
+    hidden_size: int = 64  # Latent dimension
+    clip_dim: int = 512    # CLIP projection dimension (512-dim for clip-vit-base-patch32)
     film_hidden_dim: int = 128  # Hidden dim for FiLM MLPs
 
 
@@ -63,10 +63,10 @@ class FiLM(nnx.Module):
             num_features: Number of features in the feature map being modulated
             rngs: NNX RNGs for parameter initialization
         """
-        # MLP to produce scale parameter
-        self.scale_mlp = nnx.Linear(cond_dim, num_features, rngs=rngs)
-        # MLP to produce shift parameter
-        self.shift_mlp = nnx.Linear(cond_dim, num_features, rngs=rngs)
+        # MLP to produce scale parameter - small weights, bias init to 1 for identity when cond=0
+        self.scale_mlp = nnx.Linear(cond_dim, num_features, kernel_init=nnx.initializers.normal(0.01), bias_init=nnx.initializers.constant(1.0), rngs=rngs)
+        # MLP to produce shift parameter - small weights, bias init to 0 for zero shift when cond=0
+        self.shift_mlp = nnx.Linear(cond_dim, num_features, kernel_init=nnx.initializers.normal(0.01), rngs=rngs)
 
     def __call__(self, x: jnp.ndarray, cond: jnp.ndarray) -> jnp.ndarray:
         """
@@ -79,9 +79,17 @@ class FiLM(nnx.Module):
         Returns:
             Modulated features with same shape as x
         """
+        # Normalize conditioning to prevent extreme values
+        cond = cond / (jnp.linalg.norm(cond, axis=-1, keepdims=True) + 1e-8)
+
         # Compute scale and shift from conditioning
         scale = self.scale_mlp(cond)  # (B, num_features)
         shift = self.shift_mlp(cond)  # (B, num_features)
+
+        # Clamp scale to prevent extreme modulation (softplus ensures scale > 0, then clamp)
+        scale = jax.nn.softplus(scale)  # Ensure positive scale
+        scale = jnp.clip(scale, 0.5, 2.0)  # Clamp to reasonable range
+        shift = jnp.clip(shift, -2.0, 2.0)  # Clamp shift
 
         # Reshape for broadcasting based on input dimensions
         if x.ndim == 4:  # (B, H, W, C)
@@ -106,42 +114,45 @@ class CLIPConditionedVAE(nnx.Module):
         self.config = config
 
         # ========== Encoder (same as unconditional VAE) ==========
-        # Conv layers progressively reduce spatial dimensions while increasing channels
-        self.conv1 = nnx.Conv(in_features=3, out_features=16, kernel_size=(3, 3),
+        # Encoder: 56x56 -> 28x28 -> 14x14 -> 7x7
+        self.conv1 = nnx.Conv(in_features=3, out_features=32, kernel_size=(4, 4),
                               strides=(2, 2), padding='SAME', rngs=rngs)
-        self.conv2 = nnx.Conv(in_features=16, out_features=32, kernel_size=(3, 3),
+        self.conv2 = nnx.Conv(in_features=32, out_features=64, kernel_size=(4, 4),
                               strides=(2, 2), padding='SAME', rngs=rngs)
-        self.conv3 = nnx.Conv(in_features=32, out_features=64, kernel_size=(3, 3),
-                              strides=(1, 1), padding='SAME', rngs=rngs)
+        self.conv3 = nnx.Conv(in_features=64, out_features=128, kernel_size=(4, 4),
+                              strides=(2, 2), padding='SAME', rngs=rngs)
 
+        # 7x7x128 = 6272
         # Project flattened features to latent parameters (mu, log_var)
         # Output is 2 * hidden_size because we split into mu and log_var
-        self.linear1 = nnx.Linear(14 * 14 * 64, 2 * config.hidden_size, rngs=rngs)
+        self.linear1 = nnx.Linear(7 * 7 * 128, 2 * config.hidden_size, rngs=rngs)
 
         # ========== Decoder with FiLM conditioning ==========
         # Project latent to spatial features
-        self.linear2 = nnx.Linear(config.hidden_size, 14 * 14 * 64, rngs=rngs)
+        self.linear2 = nnx.Linear(config.hidden_size, 7 * 7 * 128, rngs=rngs)
 
-        # Deconv layers with FiLM conditioning at each layer
+        # Decoder uses resize+conv (avoids checkerboard artifacts) with FiLM conditioning
         # FiLM allows CLIP embeddings to modulate the generation process
 
-        # Layer 1: 64 channels -> FiLM -> deconv -> 32 channels
-        self.film1 = FiLM(config.clip_dim, num_features=64, rngs=rngs)
-        self.deconv1 = nnx.ConvTranspose(in_features=64, out_features=32,
-                                         kernel_size=(3, 3), strides=(2, 2),
-                                         padding='SAME', rngs=rngs)
+        # Layer 1: 128 channels -> FiLM -> resize+conv -> 64 channels
+        self.film1 = FiLM(config.clip_dim, num_features=128, rngs=rngs)
+        self.deconv1 = nnx.Conv(in_features=128, out_features=64, kernel_size=(3, 3),
+                                padding='SAME', rngs=rngs)
 
-        # Layer 2: 32 channels -> FiLM -> deconv -> 16 channels
-        self.film2 = FiLM(config.clip_dim, num_features=32, rngs=rngs)
-        self.deconv2 = nnx.ConvTranspose(in_features=32, out_features=16,
-                                         kernel_size=(3, 3), strides=(2, 2),
-                                         padding='SAME', rngs=rngs)
+        # Layer 2: 64 channels -> FiLM -> resize+conv -> 32 channels
+        self.film2 = FiLM(config.clip_dim, num_features=64, rngs=rngs)
+        self.deconv2 = nnx.Conv(in_features=64, out_features=32, kernel_size=(3, 3),
+                                padding='SAME', rngs=rngs)
 
-        # Layer 3: 16 channels -> FiLM -> deconv -> 3 channels (RGB)
-        self.film3 = FiLM(config.clip_dim, num_features=16, rngs=rngs)
-        self.deconv3 = nnx.ConvTranspose(in_features=16, out_features=3,
-                                         kernel_size=(3, 3), strides=(1, 1),
-                                         padding='SAME', rngs=rngs)
+        # Layer 3: 32 channels -> FiLM -> resize+conv -> 3 channels (RGB)
+        self.film3 = FiLM(config.clip_dim, num_features=32, rngs=rngs)
+        self.deconv3 = nnx.Conv(in_features=32, out_features=3, kernel_size=(3, 3),
+                                padding='SAME', rngs=rngs)
+
+    def _resize_conv(self, x, target_h, target_w, conv_layer):
+        """Resize then conv for better upsampling than ConvTranspose."""
+        x = jax.image.resize(x, (x.shape[0], target_h, target_w, x.shape[3]), method='bilinear')
+        return conv_layer(x)
 
     def encode(self, x: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
@@ -157,14 +168,14 @@ class CLIPConditionedVAE(nnx.Module):
         # Convert CHW -> HWC for convolution
         x = x.transpose(0, 2, 3, 1)  # (B, H, W, C)
 
-        # Convolutional feature extraction
-        x = jax.nn.relu(self.conv1(x))  # (B, H/2, W/2, 16)
-        x = jax.nn.relu(self.conv2(x))  # (B, H/4, W/4, 32)
-        x = jax.nn.relu(self.conv3(x))  # (B, H/4, W/4, 64)
+        # Encoder with ReLU activations: 56x56 -> 28x28 -> 14x14 -> 7x7
+        x = jax.nn.relu(self.conv1(x))  # (B, 28, 28, 32)
+        x = jax.nn.relu(self.conv2(x))  # (B, 14, 14, 64)
+        x = jax.nn.relu(self.conv3(x))  # (B, 7, 7, 128)
 
         # Flatten and project to latent
         B = x.shape[0]
-        x = x.reshape(B, -1)  # (B, 14*14*64)
+        x = x.reshape(B, -1)  # (B, 7*7*128)
         x = self.linear1(x)   # (B, 2 * hidden_size)
 
         # Split into mean and log variance
@@ -195,21 +206,21 @@ class CLIPConditionedVAE(nnx.Module):
             Reconstructed images of shape (B, C, H, W) in CHW format
         """
         # Project latent to spatial features
-        x = self.linear2(z)  # (B, 14*14*64)
+        x = self.linear2(z)  # (B, 7*7*128)
         B = x.shape[0]
-        x = x.reshape(B, 14, 14, 64)  # (B, 14, 14, 64)
+        x = x.reshape(B, 7, 7, 128)  # (B, 7, 7, 128)
 
-        # Decoder layer 1 with FiLM conditioning
+        # Decoder layer 1 with FiLM conditioning: 7x7 -> 14x14
         x = self.film1(x, clip_emb)  # Apply FiLM modulation
-        x = jax.nn.relu(self.deconv1(x))  # (B, 28, 28, 32)
+        x = jax.nn.relu(self._resize_conv(x, 14, 14, self.deconv1))  # (B, 14, 14, 64)
 
-        # Decoder layer 2 with FiLM conditioning
+        # Decoder layer 2 with FiLM conditioning: 14x14 -> 28x28
         x = self.film2(x, clip_emb)  # Apply FiLM modulation
-        x = jax.nn.relu(self.deconv2(x))  # (B, 56, 56, 16)
+        x = jax.nn.relu(self._resize_conv(x, 28, 28, self.deconv2))  # (B, 28, 28, 32)
 
-        # Decoder layer 3 with FiLM conditioning
+        # Decoder layer 3 with FiLM conditioning: 28x28 -> 56x56
         x = self.film3(x, clip_emb)  # Apply FiLM modulation
-        x = jax.nn.sigmoid(self.deconv3(x))  # (B, 56, 56, 3), sigmoid for [0,1]
+        x = jax.nn.sigmoid(self._resize_conv(x, 56, 56, self.deconv3))  # (B, 56, 56, 3), sigmoid for [0,1]
 
         # Convert HWC -> CHW for output
         x = x.transpose(0, 3, 1, 2)  # (B, 3, H, W)
@@ -308,7 +319,7 @@ class CLIPWrapper:
 
 @nnx.jit
 def step_fn(model: CLIPConditionedVAE, x: jnp.ndarray,
-            clip_emb: jnp.ndarray, key: jnp.ndarray):
+            clip_emb: jnp.ndarray, key: jnp.ndarray, kl_weight: float = 0.001):
     """
     Single training step with conditional ELBO loss.
 
@@ -321,26 +332,27 @@ def step_fn(model: CLIPConditionedVAE, x: jnp.ndarray,
         x: Batch of images (B, C, H, W)
         clip_emb: Batch of CLIP embeddings (B, clip_dim)
         key: JAX random key
+        kl_weight: Weight for KL divergence term (for annealing)
 
     Returns:
         loss: Scalar loss value
-        (y, key): Tuple of reconstructed images and updated key
+        (y, key, recon_loss, kl_loss): Tuple of reconstructed images, updated key, and loss components
         grads: Gradients for optimization
     """
     def loss_fn(model: CLIPConditionedVAE):
         y, mu, log_var, key_out = model(x, clip_emb, key)
 
         # Reconstruction loss (MSE)
-        recon_loss = jnp.sum((y - x) ** 2)
+        recon_loss = jnp.sum((y - x) ** 2) / x.shape[0]
 
         # KL divergence to standard normal prior
         # KL(N(mu, sigma^2) || N(0, 1)) = 0.5 * sum(sigma^2 + mu^2 - log(sigma^2) - 1)
-        kl_loss = 0.5 * jnp.sum(jnp.exp(log_var) + mu ** 2 - log_var - 1)
+        kl_loss = 0.5 * jnp.sum(jnp.exp(log_var) + mu ** 2 - 1 - log_var) / x.shape[0]
 
         # Total ELBO loss (negative ELBO, so we minimize)
-        loss = (recon_loss + kl_loss) / x.shape[0]
+        loss = recon_loss + kl_weight * kl_loss
 
-        return loss, (y, key_out)
+        return loss, (y, key_out, recon_loss, kl_loss)
 
     return nnx.value_and_grad(loss_fn, has_aux=True)(model)
 
@@ -472,7 +484,8 @@ def train_clip_vae(
     num_epochs: int = 10,
     batch_size: int = 32,
     learning_rate: float = 1e-3,
-    save_dir: str = "checkpoints"
+    save_dir: str = "checkpoints",
+    steps_per_epoch: int = 5000
 ):
     """
     Train the CLIP-conditioned VAE on CelebA dataset.
@@ -488,6 +501,7 @@ def train_clip_vae(
         batch_size: Batch size for training
         learning_rate: Learning rate for Adam optimizer
         save_dir: Directory to save checkpoints
+        steps_per_epoch: Approximate steps per epoch for KL annealing
     """
     # Initialize model, optimizer, and CLIP
     rngs = nnx.Rngs(default=0)
@@ -505,11 +519,26 @@ def train_clip_vae(
     key = jax.random.PRNGKey(42)
     step = 0
 
+    # KL Annealing configuration
+    kl_warmup_epochs = 2  # Linearly increase β from 0 to 1 over this many epochs
+    # Estimate steps per epoch (CelebA has ~162k training images)
+    steps_per_epoch = 162000 // batch_size
+
+    def get_kl_weight(step, warmup_epochs, steps_per_epoch):
+        """Linear KL annealing: 0 -> 1 over warmup_epochs, then stays at 1."""
+        total_warmup_steps = warmup_epochs * steps_per_epoch
+        if step < total_warmup_steps:
+            return step / total_warmup_steps
+        return 1.0
+
     print(f"Starting training for {num_epochs} epochs...")
     print(f"Batch size: {batch_size}, Learning rate: {learning_rate}")
+    print(f"KL Annealing: Linear β=0 -> 1 over {kl_warmup_epochs} epochs, then β=1")
 
     for epoch in range(num_epochs):
         epoch_loss = 0.0
+        epoch_recon_loss = 0.0
+        epoch_kl_loss = 0.0
         num_batches = 0
 
         for batch_idx, (x, _) in enumerate(train_it):
@@ -524,19 +553,31 @@ def train_clip_vae(
             clip_emb_np = clip_wrapper.encode_images(pil_images)
             clip_emb = jnp.array(clip_emb_np)
 
+            # Linear KL annealing
+            kl_weight = get_kl_weight(step, kl_warmup_epochs, steps_per_epoch)
+
             # Training step
-            (loss, (_, key)), grads = step_fn(model, x, clip_emb, key)
+            (loss, (_, key, recon_loss, kl_loss)), grads = step_fn(model, x, clip_emb, key, kl_weight)
             optimizer.update(model, grads)
 
             epoch_loss += float(loss)
+            epoch_recon_loss += float(recon_loss)
+            epoch_kl_loss += float(kl_loss)
             num_batches += 1
             step += 1
 
             if batch_idx % 100 == 0:
-                print(f"Epoch {epoch+1}/{num_epochs}, Batch {batch_idx}, Loss: {loss:.4f}")
+                print(f"Epoch {epoch+1}/{num_epochs}, Batch {batch_idx}, Loss: {loss:.4f}, "
+                      f"recon={recon_loss:.2f}, kl={kl_loss:.4f}, β={kl_weight:.3f}")
 
+        if num_batches == 0:
+            print(f"Warning: No batches processed in epoch {epoch+1}. Check dataset.")
+            continue
         avg_loss = epoch_loss / num_batches
-        print(f"Epoch {epoch+1} complete. Average loss: {avg_loss:.4f}")
+        avg_recon = epoch_recon_loss / num_batches
+        avg_kl = epoch_kl_loss / num_batches
+        print(f"Epoch {epoch+1} complete. Average loss: {avg_loss:.4f}, "
+              f"recon={avg_recon:.2f}, kl={avg_kl:.4f}")
 
         # Save checkpoint
         os.makedirs(save_dir, exist_ok=True)

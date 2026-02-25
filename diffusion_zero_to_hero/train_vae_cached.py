@@ -15,7 +15,8 @@ from vae_clip import CLIPConditionedVAE, Config, step_fn, generate_from_text, vi
 def train_with_cached_embeddings(
     num_epochs: int = 10,
     batch_size: int = 32,
-    learning_rate: float = 1e-3
+    learning_rate: float = 1e-3,
+    kl_warmup_epochs: int = 2
 ):
     """Train VAE using pre-extracted CLIP embeddings."""
     
@@ -54,6 +55,17 @@ def train_with_cached_embeddings(
     
     # Training loop
     key = jax.random.PRNGKey(42)
+    step = 0
+    steps_per_epoch = (num_samples + batch_size - 1) // batch_size
+
+    def get_kl_weight(step, warmup_epochs, steps_per_epoch):
+        """Linear KL annealing: 0 -> 1 over warmup_epochs, then stays at 1."""
+        total_warmup_steps = warmup_epochs * steps_per_epoch
+        if step < total_warmup_steps:
+            return step / total_warmup_steps
+        return 1.0
+
+    print(f"KL Annealing: Linear β=0 -> 1 over {kl_warmup_epochs} epochs, then β=1")
 
     for epoch in range(num_epochs):
         print(f"\nEpoch {epoch + 1}/{num_epochs}")
@@ -71,10 +83,14 @@ def train_with_cached_embeddings(
             # Get batch data
             batch_images = jnp.array(all_images[batch_indices])
             batch_clip = jnp.array(all_clip_emb[batch_indices])
-            
+
+            # Linear KL annealing
+            kl_weight = get_kl_weight(step, kl_warmup_epochs, steps_per_epoch)
+
             # Training step
-            (loss, (_, key)), grads = step_fn(model, batch_images, batch_clip, key)
+            (loss, (_, key, recon_loss, kl_loss)), grads = step_fn(model, batch_images, batch_clip, key, kl_weight)
             optimizer.update(model, grads)
+            step += 1
             
             epoch_loss += float(loss)
             num_batches += 1
@@ -91,17 +107,19 @@ def train_with_cached_embeddings(
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--epochs', type=int, default=4)
     parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--kl-warmup-epochs', type=int, default=2, help='Linearly increase KL weight from 0 to 1 over this many epochs')
     args = parser.parse_args()
-    
+
     model, config, key = train_with_cached_embeddings(
         num_epochs=args.epochs,
         batch_size=args.batch_size,
-        learning_rate=args.lr
+        learning_rate=args.lr,
+        kl_warmup_epochs=args.kl_warmup_epochs
     )
     
     # Generate samples
