@@ -1,13 +1,14 @@
 #!/bin/bash
 # remote_run.sh - Run Python scripts on remote GPU machines with log streaming
 #
-# Usage: ./remote_run.sh [-d] [-n SESSION] [-b BRANCH] <ssh-host> <script-path> [script-args...]
+# Usage: ./remote_run.sh [-d] [-n SESSION] [-b BRANCH] [-e KEY=VALUE] <ssh-host> <script-path> [script-args...]
 #        ./remote_run.sh <ssh-host> <command>
 #
 # Options:
 #   -d           - Detached mode (run in background)
 #   -n SESSION   - Custom tmux session name (default: ml_basics_remote)
 #   -b BRANCH    - Git branch or commit to checkout before running
+#   -e KEY=VALUE - Set environment variable on remote (can be used multiple times)
 #
 # Commands (when no script path provided):
 #   attach       - Attach to running tmux session
@@ -17,8 +18,12 @@
 
 set -e
 
+if [[ "$TERM_PROGRAM" == "ghostty" ]]; then
+    export TERM=xterm-256color
+fi
+
 # Configuration
-REMOTE_DIR="~/ml-basics"
+REMOTE_DIR="/root/ml-basics"
 REPO_URL="https://github.com/novastar53/ml-basics.git"
 DEFAULT_SESSION="ml_basics_remote"
 LOG_DIR="remote_logs"
@@ -35,8 +40,9 @@ NC='\033[0m' # No Color
 DETACH=false
 SESSION_NAME="$DEFAULT_SESSION"
 GIT_REF=""
+ENV_VARS=()
 
-while getopts "dn:b:" opt; do
+while getopts "dn:b:e:" opt; do
     case $opt in
         d)
             DETACH=true
@@ -46,6 +52,9 @@ while getopts "dn:b:" opt; do
             ;;
         b)
             GIT_REF="$OPTARG"
+            ;;
+        e)
+            ENV_VARS+=("$OPTARG")
             ;;
         \?)
             echo -e "${RED}Invalid option: -$OPTARG${NC}" &&2
@@ -92,7 +101,10 @@ setup_remote() {
     remote_exec "bash -l" << REMOTE_SCRIPT
 set -e
 
-REMOTE_DIR_EXPANDED=\$(eval echo ~/ml-basics)
+# Set environment variables
+$(for env_var in "${ENV_VARS[@]}"; do echo "export $env_var"; done)
+
+REMOTE_DIR_EXPANDED="/root/ml-basics"
 PARENT_DIR=\$(dirname "\$REMOTE_DIR_EXPANDED")
 
 # Clone or update repo
@@ -129,6 +141,19 @@ else
     # Try jax-flow first, fall back to jax_fusion
     git clone https://github.com/novastar53/jax-flow "\$JAXFLOW_DIR" 2>/dev/null || \
         git clone https://github.com/novastar53/jax_fusion "\$JAXFLOW_DIR"
+fi
+
+# Clone or update jaxpt dependency (required sibling directory)
+JAXPT_DIR="\$PARENT_DIR/jaxpt"
+if [ -d "\$JAXPT_DIR" ]; then
+    echo "Updating jaxpt dependency..."
+    cd "\$JAXPT_DIR"
+    git fetch origin
+    git pull origin main || true
+else
+    echo "Cloning jaxpt dependency..."
+    mkdir -p "\$PARENT_DIR"
+    git clone https://github.com/novastar53/jaxpt "\$JAXPT_DIR"
 fi
 
 # Create log directory
@@ -192,6 +217,9 @@ run_script_foreground() {
     remote_exec "bash -l" << REMOTE_SCRIPT
 set -e
 
+# Set environment variables
+$(for env_var in "${ENV_VARS[@]}"; do echo "export $env_var"; done)
+
 REMOTE_DIR_EXPANDED=\$(eval echo $REMOTE_DIR)
 cd "\$REMOTE_DIR_EXPANDED"
 
@@ -228,6 +256,7 @@ source \$HOME/.local/bin/env 2>/dev/null
 tmux kill-session -t $SESSION_NAME 2>/dev/null || true
 tmux new-session -d -s $SESSION_NAME -c "\$REMOTE_DIR_EXPANDED"
 tmux send-keys -t $SESSION_NAME "source \$HOME/.local/bin/env 2>/dev/null" Enter
+$(for env_var in "${ENV_VARS[@]}"; do echo "tmux send-keys -t $SESSION_NAME \"export $env_var\" Enter"; done)
 tmux send-keys -t $SESSION_NAME "uv run python $script_path $script_args 2>&1 | tee $log_file" Enter
 
 echo "Script started in tmux session '$SESSION_NAME'"
