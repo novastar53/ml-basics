@@ -102,7 +102,9 @@ setup_remote() {
 set -e
 
 # Set environment variables
-$(for env_var in "${ENV_VARS[@]}"; do echo "export $env_var"; done)
+echo "[remote_run] Setting environment variables..."
+$(for env_var in "${ENV_VARS[@]}"; do echo "export $env_var && echo '[remote_run] Set $env_var'"; done)
+echo "[remote_run] CELEBA_BACKEND=$CELEBA_BACKEND"
 
 REMOTE_DIR_EXPANDED="/root/ml-basics"
 PARENT_DIR=\$(dirname "\$REMOTE_DIR_EXPANDED")
@@ -218,7 +220,9 @@ run_script_foreground() {
 set -e
 
 # Set environment variables
+echo "[remote_run] Setting environment variables for script execution..."
 $(for env_var in "${ENV_VARS[@]}"; do echo "export $env_var"; done)
+echo "[remote_run] CELEBA_BACKEND=\"\$CELEBA_BACKEND\""
 
 REMOTE_DIR_EXPANDED=\$(eval echo $REMOTE_DIR)
 cd "\$REMOTE_DIR_EXPANDED"
@@ -226,6 +230,8 @@ cd "\$REMOTE_DIR_EXPANDED"
 source \$HOME/.local/bin/env 2>/dev/null
 
 echo "Starting: uv run python $script_path $script_args"
+echo "[remote_run] Environment for script:"
+env | grep -E '^(HF_TOKEN|CELEBA_BACKEND|CUDA)'
 uv run python $script_path $script_args 2>&1 | tee $log_file
 REMOTE_SCRIPT
 
@@ -256,7 +262,9 @@ source \$HOME/.local/bin/env 2>/dev/null
 tmux kill-session -t $SESSION_NAME 2>/dev/null || true
 tmux new-session -d -s $SESSION_NAME -c "\$REMOTE_DIR_EXPANDED"
 tmux send-keys -t $SESSION_NAME "source \$HOME/.local/bin/env 2>/dev/null" Enter
+echo "[remote_run] Setting environment variables in tmux session..."
 $(for env_var in "${ENV_VARS[@]}"; do echo "tmux send-keys -t $SESSION_NAME \"export $env_var\" Enter"; done)
+tmux send-keys -t $SESSION_NAME "echo '[remote_run] CELEBA_BACKEND='\$CELEBA_BACKEND" Enter
 tmux send-keys -t $SESSION_NAME "uv run python $script_path $script_args 2>&1 | tee $log_file" Enter
 
 echo "Script started in tmux session '$SESSION_NAME'"
