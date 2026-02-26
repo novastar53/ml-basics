@@ -520,7 +520,7 @@ def train_clip_vae(
     step = 0
 
     # KL Annealing configuration
-    kl_warmup_epochs = 2  # Linearly increase β from 0 to 1 over this many epochs
+    kl_warmup_epochs = 5  # Linearly increase β from 0 to 1 over this many epochs
     # Estimate steps per epoch (CelebA has ~162k training images)
     steps_per_epoch = 162000 // batch_size
 
